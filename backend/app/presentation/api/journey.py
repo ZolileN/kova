@@ -192,3 +192,56 @@ async def add_timeline_event(journey_id: uuid.UUID, data: TimelineEventCreateSch
         
     await db.commit()
     return {"status": "success", "event_id": event_id}
+
+@router.get("/{journey_id}", response_model=JourneyResponseSchema)
+async def get_journey(journey_id: uuid.UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Journey)
+        .join(JourneyMember)
+        .where(Journey.id == journey_id, JourneyMember.user_id == current_user.id)
+        .options(selectinload(Journey.journey_type))
+    )
+    j = result.scalars().first()
+    if not j:
+        raise HTTPException(status_code=404, detail="Journey not found")
+        
+    return {
+        "id": j.id,
+        "title": j.title,
+        "journey_type_code": j.journey_type.code,
+        "start_date": j.start_date,
+        "end_date": j.end_date,
+        "status": j.status
+    }
+
+class TimelineEventResponseSchema(BaseModel):
+    id: uuid.UUID
+    title: str
+    description: Optional[str]
+    start_time: datetime
+    end_time: datetime
+    event_type: str
+
+@router.get("/{journey_id}/timeline/events", response_model=List[TimelineEventResponseSchema])
+async def list_timeline_events(journey_id: uuid.UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    mem_result = await db.execute(select(JourneyMember).where(JourneyMember.journey_id == journey_id, JourneyMember.user_id == current_user.id))
+    if not mem_result.scalars().first():
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
+    result = await db.execute(
+        select(TimelineEvent)
+        .where(TimelineEvent.journey_id == journey_id)
+        .order_by(TimelineEvent.start_time.asc())
+    )
+    events = result.scalars().all()
+    
+    return [
+        {
+            "id": e.id,
+            "title": e.title,
+            "description": e.description,
+            "start_time": e.start_time,
+            "end_time": e.end_time,
+            "event_type": e.event_type
+        } for e in events
+    ]
